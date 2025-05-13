@@ -13,12 +13,6 @@ The ATS Resume Matcher is a Streamlit web application that helps you quickly eva
 * **User-Friendly Interface:** Interactive and easy-to-use web application built with Streamlit.
 * **Automatic Processing:** Analysis begins as soon as a resume is uploaded and a job description is provided.
 
-## 🚀 Live Demo / Screenshots
-
-*(Optional: Add a link to a deployed version or embed a GIF/screenshots here to showcase the application in action.)*
-* Example: `[Link to Live Demo](your-deployed-app-url)`
-* Example: `![ATS Resume Matcher Screenshot](path/to/screenshot.png)`
-
 ## 🛠️ Technology Stack
 
 This project is built with the following core technologies:
