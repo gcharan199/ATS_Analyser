@@ -7,71 +7,61 @@ import docx2txt
 from dotenv import load_dotenv
 import logging
 
-# Suppress pdf-related warnings for a cleaner console output
+# Suppress pdf-related warnings
 logging.getLogger("pdfminer").setLevel(logging.ERROR)
 logging.getLogger("pdfplumber").setLevel(logging.ERROR)
 
 load_dotenv()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-MODEL_NAME = "models/gemini-2.0-flash"  # User-specified model, ensure it's accessible
+MODEL_NAME = "models/gemini-2.0-flash"
 
 # --- Helper Functions ---
 def extract_text_from_file(uploaded_file):
-    """Extracts text from PDF or DOCX files."""
     try:
         if uploaded_file.name.endswith(".pdf"):
             with pdfplumber.open(uploaded_file) as pdf:
                 return "\n".join([page.extract_text() for page in pdf.pages if page.extract_text()])
         elif uploaded_file.name.endswith(".docx"):
             return docx2txt.process(uploaded_file)
+        else:
+            st.warning("Unsupported file format. Please upload a PDF or DOCX file.")
     except Exception as e:
         st.error(f"Error extracting text from {uploaded_file.name}: {e}")
     return ""
 
-def analyze_resume_with_gemini(resume_text, jd_text, model_instance):
-    """Analyzes resume against job description using the provided Gemini model instance."""
-    prompt = f"""Analyze the following resume and compare it against the job description.
+def analyze_resume_with_gemini(resume_text, model_instance):
+    prompt = f"""Extract the following fields from the resume:
 
 Resume:
 ---
 {resume_text}
 ---
 
-Job Description:
----
-{jd_text}
----
-
 Instructions for Output:
-1.  Break down the resume into the following sections. If a section is not present in the resume, explicitly state "Not Found" or "None" for that section's content.
-    - Contact Info
-    - Skills (ensure this includes all technical and soft skills listed)
-    - Experience
-    - Education
-    - Certifications (if any)
-    - Achievements / Others (if any, combine these or list as "Achievements" or "Others" if only one type exists)
-
-2.  Provide an overall match score as a percentage (e.g., Overall Match Score: 85%). This score should reflect how well the resume matches the job description.
-
-3.  Format the output clearly:
-    - Each section should start with its name (e.g., "Skills") on a new line.
+1. Extract and return these fields as separate sections (even if not found, state 'Not Found' or 'None'):
+    - Name
+    - Contact
+    - Email-ID
+    - Skills (all technical and soft skills listed)
+2. Format output clearly:
+    - Each section should start with its name (e.g., "Name") on a new line.
     - List items within sections using hyphens (e.g., "- Skill 1"). Do not use asterisks.
-    - Return ONLY the section-wise breakdown and the overall match score. Do not add any extra explanations, conversational text, or disclaimers.
+    - Return ONLY the section-wise breakdown. Do not add any extra explanations, conversational text, or disclaimers.
     - Ensure each requested section header is present in your output, even if its content is "None".
 """
     try:
         response = model_instance.generate_content(prompt)
         return response.text.strip()
     except Exception as e:
-        st.error(f"Gemini API Error: {str(e)}") # Display error directly in the app
-        return f"Error during Gemini API call: {str(e)}" # Return error string for internal handling
+        st.error(f"Gemini API Error: {str(e)}")
+        return f"Error during Gemini API call: {str(e)}"
 
-# --- Main Streamlit App ---
-st.set_page_config(page_title="ATS Resume Matcher", layout="wide")
-st.title("📄 ATS Resume Matcher")
-st.markdown("Upload a resume and paste a job description. Analysis will start automatically when both fields are populated.")
+# --- Streamlit App ---
+st.set_page_config(page_title="ATS Resume Extractor", layout="wide")
+st.title("📄 ATS Resume Extractor")
+st.markdown("Upload a resume. The app extracts Name, Contact, Email-ID, and Skills.")
 
-# Initialize Gemini Model (once)
+# Load Gemini
 try:
     if not GEMINI_API_KEY:
         st.error("GEMINI_API_KEY not found. Please set it in your .env file.")
@@ -79,109 +69,97 @@ try:
     genai.configure(api_key=GEMINI_API_KEY)
     gemini_model = genai.GenerativeModel(MODEL_NAME)
 except Exception as e:
-    st.error(f"Error initializing Gemini model ({MODEL_NAME}): {e}")
-    st.info("Please ensure the model name is correct and you have access.")
+    st.error(f"Error initializing Gemini model: {e}")
     st.stop()
 
-for key, default_val in [("processed", False), ("result", ""), ("resume_filename", ""), ("last_jd", "")]:
+# Initialize session state
+for key, default_val in [("processed", False), ("result", ""), ("resume_filename", ""), ("excel_format", "")]:
     st.session_state.setdefault(key, default_val)
 
-col1, col2 = st.columns(2)
-with col1:
-    st.subheader("Upload Resume")
-    resume_file = st.file_uploader("Formats: PDF, DOCX", type=["pdf", "docx"], key="resume_uploader")
-with col2:
-    st.subheader("Job Description")
-    jd_text_input = st.text_area("Paste job description here", height=280, key="jd_input")
+st.subheader("Upload Resume")
+resume_file = st.file_uploader("Formats: PDF, DOCX", type=["pdf", "docx"], key="resume_uploader")
 
 current_resume_name = resume_file.name if resume_file else None
 resume_changed = current_resume_name and st.session_state.resume_filename != current_resume_name
-jd_changed = st.session_state.last_jd != jd_text_input # True if text area content differs
 
-if resume_changed or jd_changed:
+if resume_changed:
     st.session_state.processed = False
-    st.session_state.result = "" 
-    if resume_changed: st.session_state.resume_filename = current_resume_name
-    st.session_state.last_jd = jd_text_input # Update last_jd to track changes for the next run
+    st.session_state.result = ""
+    st.session_state.excel_format = ""
+    st.session_state.resume_filename = current_resume_name
 
-# Core processing logic: runs automatically if inputs are ready and not yet processed
-if not st.session_state.processed and resume_file and jd_text_input.strip():
+# Process and analyze
+if not st.session_state.processed and resume_file:
     with st.spinner(f"Extracting text from {resume_file.name}..."):
         resume_text = extract_text_from_file(resume_file)
-    
-    if resume_text: 
-        with st.spinner("🤖 Gemini is analyzing... This may take a moment."):
-            st.session_state.result = analyze_resume_with_gemini(resume_text, jd_text_input, gemini_model)
-        st.session_state.processed = True 
-    elif resume_file: # Text extraction failed
-        # Error for extraction failure is shown by extract_text_from_file
-        st.session_state.processed = True # Mark as processed to avoid re-looping this error
+    if resume_text:
+        with st.spinner("🤖 Gemini is analyzing..."):
+            st.session_state.result = analyze_resume_with_gemini(resume_text, gemini_model)
+        st.session_state.processed = True
+    else:
+        st.session_state.processed = True
 
-# --- Result Display ---
+# Extract fields and generate Excel format
 if st.session_state.result:
     result_text = st.session_state.result
-    is_api_error_string = result_text.startswith("Error during Gemini API call")
-
-    if not is_api_error_string:
-        score_match = re.search(r"Overall Match Score:\s*(\d+)%?", result_text, re.IGNORECASE)
-        overall_score_value = score_match.group(1) if score_match else None
-
-        if overall_score_value:
-            try:
-                score_int = int(overall_score_value)
-                color = "green" if score_int >= 75 else "orange" if score_int >= 50 else "red"
-                
-                st.markdown(f"""
-                <div style="text-align: center; margin-bottom: 20px; padding-top: 10px;">
-                    <span style="font-size: 1.2em; font-weight: bold; display: block; margin-bottom: 5px;">Overall Match Score</span>
-                    <span style="font-size: 3em; color: {color}; font-weight: bold;">{score_int}%</span>
-                </div>
-                """, unsafe_allow_html=True)
-                st.progress(score_int / 100.0)
-                st.markdown("---") 
-            except ValueError:
-                st.warning(f"Could not parse score from analysis: {overall_score_value}")
-        else:
-            st.warning("Overall Match Score not found in the analysis provided by the AI.")
-    
-    if is_api_error_string:
-        # Error was already displayed by analyze_resume_with_gemini via st.error
-        pass 
+    if result_text.startswith("Error during Gemini API call"):
+        st.error(result_text)
     else:
-        st.success("Analysis Processed!") 
-
-        st.subheader("📊 Detailed Analysis")
-        sections_to_extract = ["Contact Info", "Skills", "Experience", "Education", "Certifications", "Achievements", "Others"]
-        # Delimiters include section names and the score line to prevent score bleeding into the last section
-        all_delimiters = sections_to_extract + ["Overall Match Score"]
-        
-        extracted_data_for_display = []
-        seen_content_blocks = set()
-
-        for section_name in sections_to_extract:
-            # Regex: anchored to start of line, captures content until next known delimiter or end of string.
-            # Critical for parsing Gemini's structured output.
-            pattern = rf"^{re.escape(section_name)}[^\n]*\n(.*?)(?=\n(?:{'|'.join(re.escape(s) for s in all_delimiters)})[^\n]*\n|\Z)"
+        fields = ["Name", "Contact", "Email-ID", "Skills"]
+        extracted_fields = {}
+        for field in fields:
+            pattern = rf"^{re.escape(field)}[^\n]*\n(.*?)(?=\n(?:{'|'.join(re.escape(f) for f in fields)})[^\n]*\n|\Z)"
             match = re.search(pattern, result_text, re.IGNORECASE | re.DOTALL | re.MULTILINE)
             if match:
                 content = match.group(1).strip()
-                is_placeholder = content.lower() in ["none", "not found", "n/a"]
-                if content and not is_placeholder and content not in seen_content_blocks:
-                    extracted_data_for_display.append({"Section": section_name, "Content": content.replace("\n", "<br>")})
-                    seen_content_blocks.add(content) 
-                elif content and is_placeholder: 
-                    extracted_data_for_display.append({"Section": section_name, "Content": f"<i>{content}</i>"})
-        
-        if extracted_data_for_display:
-            st.markdown("### Extracted Resume Sections")
-            for item in extracted_data_for_display:
-                is_empty_placeholder = item['Content'].lower().startswith("<i>") and item['Content'].lower().endswith("</i>")
-                with st.expander(f"**{item['Section']}**", expanded=not is_empty_placeholder):
-                    st.markdown(item['Content'], unsafe_allow_html=True)
-        elif not is_api_error_string : 
-            st.warning("No detailed sections could be extracted from the AI's analysis.")
+                extracted_fields[field] = content if content else "Not Found"
+            else:
+                extracted_fields[field] = "Not Found"
 
-# Handling for scenarios where processing was attempted but no result (e.g., text extraction failed earlier)
+        # Create Excel-formatted line
+        excel_headers = ["Name", "Contact No.", "Email-ID", "Skills"]
+        cleaned_data = []
+        for field in fields:
+            value = extracted_fields.get(field, "Not Found")
+            cleaned_value = value.replace('\n', ' ').replace('\r', ' ').strip()
+            cleaned_value = re.sub(r'[-•*]\s*', '', cleaned_value)
+            cleaned_data.append(cleaned_value)
+        full_excel_format = "\t".join(cleaned_data)
+        st.session_state.excel_format = full_excel_format
+
+        # --- Show COPY TO EXCEL block here ---
+        st.markdown("---")
+        st.markdown("### 📋 Copy for Excel")
+
+        st.components.v1.html(f"""
+            <div style="font-family: Arial, sans-serif;">
+              <textarea id="excelData" rows="4" style="width: 100%; padding: 10px; font-family: monospace; border: 1px solid #ccc; border-radius: 5px;">{full_excel_format}</textarea>
+              <button onclick="copyToClipboard()" style="margin-top: 10px; background-color: #4CAF50; color: white; border: none; padding: 8px 16px; border-radius: 5px; cursor: pointer;">
+                📋 Copy
+              </button>
+            </div>
+            <script>
+            function copyToClipboard() {{
+                const textarea = document.getElementById("excelData");
+                textarea.select();
+                document.execCommand("copy");
+                alert("✅ Data copied to clipboard!");
+            }}
+            </script>
+        """, height=180)
+
+        st.info("💡 Tip: Paste this into Excel. It will auto-fill Name, Contact No., Email-ID, and Skills.")
+
+        # Show extracted fields
+        st.markdown("---")
+        st.subheader("📊 Extracted Fields")
+        for field, value in extracted_fields.items():
+            st.markdown(f"**{field}:**")
+            st.code(value, language=None)
+
+        with st.expander("📄 Full Extraction Output"):
+            st.markdown(result_text)
+
 elif st.session_state.processed and not st.session_state.result:
-    if not resume_file and jd_text_input.strip(): st.info("Please upload a Resume to begin analysis.")
-    elif resume_file and not jd_text_input.strip(): st.info("Please paste the Job Description to begin analysis.")
+    if not resume_file:
+        st.info("Please upload a resume to begin extraction.")
