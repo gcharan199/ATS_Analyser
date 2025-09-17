@@ -1,0 +1,406 @@
+# Beginner-friendly project review guide
+_Exported on 9/17/2025 at 16:26:42 GMT+5:30 from Cursor (1.6.6)_
+
+---
+
+**User**
+
+
+Your job is to generate a **detailed, rookie-friendly project review**.
+
+Your explanation must include:  
+
+1. **Project Overview** – explain what the project does in simple terms.  
+2. **Directory & File Structure** – list out each folder/file and explain its purpose.  
+3. **Workflow** – describe step-by-step how the project runs (from start to finish).  
+4. **Setup & Installation Guide** – show how to install dependencies, set environment variables, and run the project.  
+5. **Key Components** – explain the important files and what logic they contain.  
+6. **Data Flow** – explain how information moves inside the system (frontend → backend → database → external APIs).  
+7. **New Developer Guide** – explain what a new contributor should do to understand and start working on the project.  
+
+Make the explanation **clear, detailed, and beginner-friendly**, with headings, bullet points, and code snippets if necessary.
+
+
+---
+
+**Cursor**
+
+I'll start by skimming the main package manifests to understand how each app is run, plus the Python agents' dependencies. Then I'll dive into a few key files like Supabase clients and API utilities to map data flow and environment variables.
+
+I found the package manifests. Next, I'll scan key libraries (Supabase clients, API utils, validations) and a few API routes in each Next.js app to document data flow and required environment variables.
+
+I'll fetch key library files and scripts across apps to map environment variables, data flow, and architecture. Then I'll summarize a clear project review.
+
+I'll quickly scan some API helpers and Supabase client files across apps, plus search for the `check-subscriptions` route to accurately describe data flow and env variables.
+
+I scanned each app’s package and key libs (Supabase clients, API helpers, Python agents) to map structure, env vars, and data flow. I’ll now give you a thorough, beginner‑friendly review with step‑by‑step setup.
+
+## Project Overview
+- **What it is**: A monorepo with three Next.js apps and one Python agents service:
+  - **Admin Panel** (`admin-nexvo-ai`): manages users and content, with Supabase Auth and Storage.
+  - **Student Portal** (`student-portal`): student-facing app with payments (Cashfree), notifications (Twilio), and Supabase backend.
+  - **TPO Portal** (`tpo-portal`): college Training & Placement Office portal (also on Supabase).
+  - **Agents** (`agents`): Python LiveKit agents (voice, STT/TTS, RAG) and a small cron-like API caller.
+  - Optional: **Agents Playground** (`agents-playground`) to test LiveKit agents in the browser.
+- **Core backend**: Supabase (Auth, Postgres, Storage, Realtime). Each Next.js app talks directly to Supabase via `@supabase/supabase-js`.
+- **External services**: Cashfree (payments), Twilio (SMS), OpenAI + Deepgram + LiveKit (for voice agents).
+
+## Directory & File Structure
+Top-level (`/Users/Charan/nexvoai`)
+- `apps/`: all applications live here.
+  - `admin-nexvo-ai/` (Next.js 13 App Router)
+    - `app/`: pages/layout; includes `app/(dashboard)/...` for the admin dashboard.
+    - `components/`: UI building blocks (shadcn/radix), file manager, modals.
+    - `hooks/`: shared React hooks (e.g., toasts).
+    - `lib/`: client utilities.
+      - `supabase.ts`: creates the Supabase client using `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_KEY`.
+      - `storage.ts`: convenience helpers for Supabase Storage (upload, get URL, read `storage_objects`).
+      - `api/`: front-end API helpers that call Supabase and external APIs.
+        - `resume.ts`: uploads resumes to the `nexvo.ai files` bucket and calls a report generation endpoint via `NEXT_PUBLIC_API_URL`.
+        - `users.ts`: batched fetching and CRUD for `app_users`, profile image URLs via Storage.
+      - `utils.ts`: small utilities (e.g., `cn` for Tailwind class merging).
+      - `validations/`: zod schemas (not opened but referenced by structure).
+    - `supabase/migrations/`: SQL migrations for the Supabase database.
+    - `types/`: shared TS types (e.g., `user.ts`, `college.ts`).
+    - `out/`: a built, statically exported site (for previews/hosting artifacts).
+    - `package.json`: Next scripts (`dev`, `build`, `start -p 3005`).
+  - `student-portal/` (Next.js 14)
+    - `app/`: routes including API routes (`app/api/...`).
+    - `components/`, `hooks/`, `lib/`: extensive UI and business logic; `lib/supabase.ts` initializes Supabase.
+    - `public/`, `styles/`, `src/`: assets and extra modules.
+    - `package.json`: scripts (`dev -p 3010`, `start -p 3010`), dependencies (Cashfree, Twilio, etc.).
+  - `tpo-portal/` (Next.js 13.5)
+    - Similar structure to admin/student; `lib/supabase.ts` uses `NEXT_PUBLIC_SUPABASE_ANON_KEY`.
+  - `agents/` (Python)
+    - `requirements.txt`: all Python deps (FastAPI, LiveKit, OpenAI, Deepgram, audio libs, etc.).
+    - `minimal_assistant.py`: LiveKit conversational agent.
+    - `nexvo_custom_endpoints.py`, `generate_report.py`, `custom_stt.py`, `custom_tts.py`: AI/voice customization and reporting helpers.
+    - `api_caller.py`: simple loop that calls `https://student.nexvo.ai/api/cron/check-subscriptions` every 10 minutes.
+    - `server_audios/` and `AI_calling_telugu_recordings_3/`: audio artifacts and scripts.
+    - `README.md`: how to run agents and required env vars.
+  - `agents-playground/`: demo UI to test LiveKit agents.
+- Root configs:
+  - `package.json`: sets `packageManager: pnpm@10.16.1`.
+  - `pnpm-lock.yaml`: lock file.
+  - `.venv/`: Python virtual environment (local).
+  - `.gitignore`, `.git/`: VCS.
+
+## Workflow (How it runs)
+1. **Local start (choose an app)**:
+   - Admin, Student, and TPO apps each run independently with Next.js. You configure `.env.local` per app and run its `dev` script.
+2. **Auth (Supabase)**:
+   - Frontend uses `lib/supabase.ts` for email/password auth. Example in admin login:
+```12:21:apps/admin-nexvo-ai/app/page.tsx
+      const { data: authData, error: authError } =
+        await supabase.auth.signInWithPassword({
+          email: formData.email,
+          password: formData.password,
+        });
+```
+   - Admin additionally checks `app_users.role === 'admin'` before redirecting to `/dashboard`.
+3. **Database & Storage**:
+   - Data is primarily in Supabase Postgres tables like `app_users`, `users`, `colleges`.
+   - Files (e.g., resumes, profile images) are uploaded to the Supabase Storage bucket `nexvo.ai files`, then published via public URLs:
+```40:44:apps/admin-nexvo-ai/lib/storage.ts
+    const { data } = supabase.storage
+      .from('nexvo.ai files')
+      .getPublicUrl(fileDetails.name);
+```
+4. **External APIs**:
+   - Admin calls a report generation API via `NEXT_PUBLIC_API_URL` in `lib/api/resume.ts`.
+   - Student portal integrates Cashfree (payments) and Twilio (notifications).
+   - Python agents use LiveKit, Deepgram, and OpenAI; they can also ping the Student Portal cron endpoint to process subscriptions periodically.
+5. **Build & deploy**:
+   - Each app uses `next build` and `next start`. Static export artifacts for admin may appear in `out/`.
+
+## Setup & Installation Guide
+### Prerequisites
+- Node.js 18+ and pnpm 10.x
+- Python 3.10–3.12 (for agents). Avoid 3.13 for some optional deps.
+
+### 1) Install dependencies
+- Per app (recommended):
+```bash
+cd /Users/Charan/nexvoai/apps/admin-nexvo-ai
+pnpm install
+
+cd /Users/Charan/nexvoai/apps/student-portal
+pnpm install
+
+cd /Users/Charan/nexvoai/apps/tpo-portal
+pnpm install
+```
+
+### 2) Environment variables
+Create a `.env.local` file inside each Next.js app directory.
+
+- Admin (`apps/admin-nexvo-ai/.env.local`):
+```bash
+# Supabase
+NEXT_PUBLIC_SUPABASE_URL=your_supabase_project_url
+NEXT_PUBLIC_SUPABASE_KEY=your_supabase_anon_key
+
+# External API base for reports, etc.
+NEXT_PUBLIC_API_URL=https://your-api.example.com
+```
+
+- Student (`apps/student-portal/.env.local`):
+```bash
+# Supabase
+NEXT_PUBLIC_SUPABASE_URL=your_supabase_project_url
+NEXT_PUBLIC_SUPABASE_KEY=your_supabase_anon_key
+
+# Payments/Notifications (sample names; confirm in integration files)
+NEXT_PUBLIC_CASHFREE_ENV=test
+NEXT_PUBLIC_CASHFREE_APP_ID=...
+CASHFREE_SECRET=...             # keep server-side if used in API routes
+TWILIO_ACCOUNT_SID=...
+TWILIO_AUTH_TOKEN=...
+TWILIO_FROM_NUMBER=...
+```
+
+- TPO (`apps/tpo-portal/.env.local`):
+```bash
+NEXT_PUBLIC_SUPABASE_URL=your_supabase_project_url
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
+```
+
+- Agents (`apps/agents/.env` or shell export):
+```bash
+LIVEKIT_URL=wss://<your-livekit>.livekit.cloud
+LIVEKIT_API_KEY=...
+LIVEKIT_API_SECRET=...
+DEEPGRAM_API_KEY=...
+OPENAI_API_KEY=...
+```
+
+Important:
+- Never commit real secrets. If any secrets are present in repo history, rotate them immediately in the provider dashboards.
+
+### 3) Run locally
+- Admin:
+```bash
+cd /Users/Charan/nexvoai/apps/admin-nexvo-ai
+pnpm dev
+# open http://localhost:3000 (dev) or use pnpm start to run on 3005
+```
+- Student:
+```bash
+cd /Users/Charan/nexvoai/apps/student-portal
+pnpm dev
+# open http://localhost:3010
+```
+- TPO:
+```bash
+cd /Users/Charan/nexvoai/apps/tpo-portal
+pnpm dev
+# open http://localhost:3000
+```
+- Agents:
+```bash
+cd /Users/Charan/nexvoai/apps/agents
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+# Example agent
+python minimal_assistant.py dev
+# API caller (runs forever, calls student portal every 10 min)
+python api_caller.py
+```
+
+## Key Components (What they do)
+- **Admin**
+  - `lib/supabase.ts`: initializes Supabase client from env vars.
+  - `lib/storage.ts`: file ops (get details from `storage_objects`, upload to `nexvo.ai files`, getPublicUrl).
+  - `lib/api/resume.ts`: uploads resume to Storage and calls `${NEXT_PUBLIC_API_URL}/report/generate-interview-prompt`.
+  - `lib/api/users.ts`: batched fetch of TPO users with joins to `colleges`, pulls `users.email`, and resolves `imageUrl` via Storage; also sign-up + insert into `app_users`, and updates.
+  - `app/page.tsx`: login page; uses Supabase `signInWithPassword` and role check.
+  - `supabase/migrations/`: DB schema managed here (tables like `app_users`, etc.).
+  - `components/ui/*`: shadcn/radix primitives and composed UI.
+- **Student**
+  - `lib/supabase.ts`: Supabase client.
+  - `app/api/*`: Next.js API routes (handles server-side tasks such as payment verification, cron handlers like `cron/check-subscriptions`).
+  - Payment & notifications: Cashfree JS SDK and Twilio client usage within `lib`/API routes.
+- **TPO**
+  - `lib/supabase.ts`: Supabase client; rest mirrors Admin/Student patterns with its own pages and components.
+- **Agents (Python)**
+  - `minimal_assistant.py`: LiveKit voice assistant; uses Deepgram STT and OpenAI TTS/LLM.
+  - `api_caller.py`: simple scheduler that hits the Student Portal cron endpoint every 10 minutes (auth via static bearer).
+  - `custom_stt.py`, `custom_tts.py`: override speech handling.
+  - `generate_report.py`, `nexvo_custom_endpoints.py`: domain-specific logic (report creation, custom endpoints).
+
+## Data Flow (End to end)
+- **Frontend → Supabase**
+  - Auth: Email/password via Supabase Auth; client gets a session token.
+  - Data: Reads/writes to tables like `app_users`, `users`, `colleges` using Supabase client SDK.
+- **Files → Supabase Storage**
+  - Frontend uploads files to bucket `nexvo.ai files` and stores returned IDs/paths in DB. Public URLs are generated to display assets.
+- **Frontend → External APIs**
+  - Admin calls a report generation service at `NEXT_PUBLIC_API_URL`.
+  - Student Portal calls payment APIs (Cashfree) from client and server, and may send SMS via Twilio from API routes.
+- **Agents ↔ External Services**
+  - Python agents connect to LiveKit, use Deepgram (STT) and OpenAI (LLM/TTS), and can call internal endpoints (e.g., Student Portal cron) for housekeeping.
+- **Database**
+  - Supabase Postgres stores normalized data; migrations live in `supabase/migrations/`. Tables referenced include `app_users`, `users`, `colleges`, and `storage_objects`.
+
+## New Developer Guide
+1. **Run one app at a time**:
+   - Start with `admin-nexvo-ai` to understand auth and Storage integration. Set `.env.local`, run `pnpm dev`, and log in.
+   - Browse `app/(dashboard)/*` to see how pages are composed.
+2. **Trace data**:
+   - Open `lib/supabase.ts` to see client init.
+   - Follow `app/page.tsx` → `lib/api/users.ts` → DB tables (`app_users`, `users`) → `lib/storage.ts` for images.
+3. **Try file upload**:
+   - Use or mock a file upload using `uploadFile` in `lib/storage.ts`. Confirm the bucket `nexvo.ai files` exists in Supabase and that public access is set appropriately for reads.
+4. **Explore Student Portal**:
+   - Run it on port 3010. Skim `app/api/*` to see server-only logic (payments, cron). Verify `.env.local` includes your Cashfree/Twilio vars if you test those flows.
+5. **Explore TPO Portal**:
+   - Similar patterns to Admin; good for seeing reused UI and Supabase patterns.
+6. **Agents**:
+   - Set required envs (LiveKit, Deepgram, OpenAI), install deps, run `minimal_assistant.py`. Use `agents-playground` frontend if desired.
+   - If you use `api_caller.py`, store the bearer token securely (best: env var) and consider a cron/systemd/PM2 supervisor in production.
+7. **Quality & conventions**:
+   - UI is shadcn/radix + Tailwind; utility `cn()` merges classes.
+   - Validation usually via zod (see `lib/validations`).
+   - Keep secrets out of git and `.env.local` out of version control.
+8. **Common pitfalls**:
+   - Missing env vars will throw at startup (Supabase clients explicitly check for env presence).
+   - CORS/base URL mismatches for `NEXT_PUBLIC_API_URL` when calling external services.
+   - Storage bucket names must exactly match (`nexvo.ai files`) including spaces.
+
+### Helpful commands
+- Install all JS deps per app:
+```bash
+cd /Users/Charan/nexvoai/apps/admin-nexvo-ai && pnpm install
+cd /Users/Charan/nexvoai/apps/student-portal && pnpm install
+cd /Users/Charan/nexvoai/apps/tpo-portal && pnpm install
+```
+- Run dev servers:
+```bash
+pnpm dev  # in each app folder (admin: 3000, student: 3010, tpo: 3000)
+```
+- Build & start:
+```bash
+pnpm build && pnpm start
+```
+- Agents:
+```bash
+cd /Users/Charan/nexvoai/apps/agents
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+python minimal_assistant.py dev
+```
+
+- Rotate any secrets that appear in the codebase and move them to environment variables.
+
+- I reviewed package manifests and key libs to map env vars and data flow. If you want, I can generate `.env.local.example` templates for each app and a `Makefile` to simplify installs and runs.
+
+```typescriptreact
+      const { data: authData, error: authError } =
+        await supabase.auth.signInWithPassword({
+          email: formData.email,
+          password: formData.password,
+        });
+```
+
+```typescript
+    const { data } = supabase.storage
+      .from('nexvo.ai files')
+      .getPublicUrl(fileDetails.name);
+```
+
+```shellscript
+cd /Users/Charan/nexvoai/apps/admin-nexvo-ai
+pnpm install
+
+cd /Users/Charan/nexvoai/apps/student-portal
+pnpm install
+
+cd /Users/Charan/nexvoai/apps/tpo-portal
+pnpm install
+```
+
+```shellscript
+# Supabase
+NEXT_PUBLIC_SUPABASE_URL=your_supabase_project_url
+NEXT_PUBLIC_SUPABASE_KEY=your_supabase_anon_key
+
+# External API base for reports, etc.
+NEXT_PUBLIC_API_URL=https://your-api.example.com
+```
+
+```shellscript
+# Supabase
+NEXT_PUBLIC_SUPABASE_URL=your_supabase_project_url
+NEXT_PUBLIC_SUPABASE_KEY=your_supabase_anon_key
+
+# Payments/Notifications (sample names; confirm in integration files)
+NEXT_PUBLIC_CASHFREE_ENV=test
+NEXT_PUBLIC_CASHFREE_APP_ID=...
+CASHFREE_SECRET=...             # keep server-side if used in API routes
+TWILIO_ACCOUNT_SID=...
+TWILIO_AUTH_TOKEN=...
+TWILIO_FROM_NUMBER=...
+```
+
+```shellscript
+NEXT_PUBLIC_SUPABASE_URL=your_supabase_project_url
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
+```
+
+```shellscript
+LIVEKIT_URL=wss://<your-livekit>.livekit.cloud
+LIVEKIT_API_KEY=...
+LIVEKIT_API_SECRET=...
+DEEPGRAM_API_KEY=...
+OPENAI_API_KEY=...
+```
+
+```shellscript
+cd /Users/Charan/nexvoai/apps/admin-nexvo-ai
+pnpm dev
+# open http://localhost:3000 (dev) or use pnpm start to run on 3005
+```
+
+```shellscript
+cd /Users/Charan/nexvoai/apps/student-portal
+pnpm dev
+# open http://localhost:3010
+```
+
+```shellscript
+cd /Users/Charan/nexvoai/apps/tpo-portal
+pnpm dev
+# open http://localhost:3000
+```
+
+```shellscript
+cd /Users/Charan/nexvoai/apps/agents
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+# Example agent
+python minimal_assistant.py dev
+# API caller (runs forever, calls student portal every 10 min)
+python api_caller.py
+```
+
+```shellscript
+cd /Users/Charan/nexvoai/apps/admin-nexvo-ai && pnpm install
+cd /Users/Charan/nexvoai/apps/student-portal && pnpm install
+cd /Users/Charan/nexvoai/apps/tpo-portal && pnpm install
+```
+
+```shellscript
+pnpm dev  # in each app folder (admin: 3000, student: 3010, tpo: 3000)
+```
+
+```shellscript
+pnpm build && pnpm start
+```
+
+```shellscript
+cd /Users/Charan/nexvoai/apps/agents
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+python minimal_assistant.py dev
+```
+
